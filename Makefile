@@ -1,7 +1,9 @@
 PROJECT_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 CMAKE_BUILD_DIR := $(PROJECT_ROOT)/build/standard
 UF2_OUTPUT_DIR := $(PROJECT_ROOT)/uf2Build
-UF2_OUTPUT := $(UF2_OUTPUT_DIR)/ds5-bridge.uf2
+# Stamped once per make invocation: ds5-bridge-DDMMYY-HHMM.uf2
+BUILD_STAMP := $(shell date +%d%m%y-%H%M)
+UF2_OUTPUT := $(UF2_OUTPUT_DIR)/ds5-bridge-$(BUILD_STAMP).uf2
 
 PICO_SDK_PATH ?= $(PROJECT_ROOT)/.deps/pico-sdk
 PICO_TOOLCHAIN_PATH ?=

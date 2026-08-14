@@ -275,13 +275,14 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     state.AllowMuteLight = 0;
                 }
 
-                // Outside host-controlled mode, do not let host applications
-                // release, fade, dim, or recolor the light bar.
-                if (config.lightbar_mode != 1) {
+                // Outside host-controlled mode - or while the critical-battery
+                // pulse is active - do not let host applications release, fade,
+                // dim, or recolor the light bar.
+                if (config.lightbar_mode != 1 || battery_lightbar_critical()) {
                     state.AllowColorLightFadeAnimation = 0;
                     state.LightFadeAnimation = LightFadeAnimation::Nothing;
                 }
-                apply_lightbar(state); // no-op in host-controlled mode
+                apply_lightbar(state); // no-op in host-controlled mode (unless critical)
 
                 memcpy(outputData + 3, &state, sizeof(SetStateData));
                 bt_write(outputData, sizeof(outputData));
@@ -385,6 +386,7 @@ int main() {
 #if ENABLE_BATT_LED
         battery_led_tick();
 #endif
+        battery_lightbar_tick();
         button_check();
         bt_inquiring_led();
         dse_task();

@@ -137,9 +137,13 @@ which makes the mic seem dead even though it is working.
 The firmware supports three lightbar modes, selectable via the `lightbar_mode` setting in the
 [web config](#configuration) or `tools/config_tool.py`:
 
-- **Battery tiers (default):** the lightbar shows the controller's battery state — red below 20%,
-  yellow below 70%, green otherwise or when charging is complete. Host applications cannot
-  override the color.
+- **Battery tiers (default):** the lightbar shows the controller's battery state — orange from
+  20 to 60%, blue from 60 to 80%, green above 80% or when charging is complete. Host
+  applications cannot override the color.
+
+Below **20% while discharging**, the lightbar switches to a **pulsing red** warning that
+overrides *every* mode — including host-controlled and custom RGB — until the battery recovers
+or the controller starts charging (while charging, the normal tier colors show progress).
 - **Host-controlled:** the lightbar is left to the host — games and tools (Steam, DualSenseX, …)
   set the color, matching a real wired DualSense.
 - **Custom RGB:** the lightbar is forced to a fixed color of your choice

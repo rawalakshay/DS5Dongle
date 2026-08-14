@@ -39,6 +39,8 @@ void bt_bootsel_hold_action();
 void bt_blacklist_persist_if_dirty();
 void battery_lightbar_reset();
 void battery_lightbar_note_report(uint8_t battery_status);
+void battery_lightbar_tick();
+bool battery_lightbar_critical();
 void apply_lightbar(SetStateData& state);
 bool update_state(const SetStateData& state);
 

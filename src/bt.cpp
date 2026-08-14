@@ -81,7 +81,8 @@ struct send_element {
 enum class BatteryLightbarTier : uint8_t {
     Invalid,
     Red,
-    Yellow,
+    Orange,
+    Blue,
     Green,
 };
 
@@ -104,16 +105,22 @@ constexpr BatteryLightbarTier battery_lightbar_tier(const uint8_t battery_status
     if (level < 2) {
         return BatteryLightbarTier::Red;
     }
-    if (level < 7) {
-        return BatteryLightbarTier::Yellow;
+    if (level < 6) {
+        return BatteryLightbarTier::Orange;
+    }
+    if (level < 8) {
+        return BatteryLightbarTier::Blue;
     }
     return BatteryLightbarTier::Green;
 }
 
 constexpr LightbarColor lightbar_color(const BatteryLightbarTier tier) {
     switch (tier) {
-        case BatteryLightbarTier::Yellow:
-            return {0xff, 0xff, 0x00};
+        case BatteryLightbarTier::Orange:
+            // 0x64 green, not full: full green reads as yellow on the RGB LED.
+            return {0xff, 0x64, 0x00};
+        case BatteryLightbarTier::Blue:
+            return {0x00, 0x00, 0xff};
         case BatteryLightbarTier::Green:
             return {0x00, 0xff, 0x00};
         case BatteryLightbarTier::Invalid:
@@ -125,28 +132,41 @@ constexpr LightbarColor lightbar_color(const BatteryLightbarTier tier) {
 
 static_assert(battery_lightbar_tier(0x00) == BatteryLightbarTier::Red);
 static_assert(battery_lightbar_tier(0x01) == BatteryLightbarTier::Red);
-static_assert(battery_lightbar_tier(0x02) == BatteryLightbarTier::Yellow);
-static_assert(battery_lightbar_tier(0x06) == BatteryLightbarTier::Yellow);
-static_assert(battery_lightbar_tier(0x07) == BatteryLightbarTier::Green);
+static_assert(battery_lightbar_tier(0x02) == BatteryLightbarTier::Orange);
+static_assert(battery_lightbar_tier(0x05) == BatteryLightbarTier::Orange);
+static_assert(battery_lightbar_tier(0x06) == BatteryLightbarTier::Blue);
+static_assert(battery_lightbar_tier(0x07) == BatteryLightbarTier::Blue);
+static_assert(battery_lightbar_tier(0x08) == BatteryLightbarTier::Green);
 static_assert(battery_lightbar_tier(0x0a) == BatteryLightbarTier::Green);
 static_assert(battery_lightbar_tier(0x11) == BatteryLightbarTier::Red);
-static_assert(battery_lightbar_tier(0x16) == BatteryLightbarTier::Yellow);
-static_assert(battery_lightbar_tier(0x17) == BatteryLightbarTier::Green);
+static_assert(battery_lightbar_tier(0x15) == BatteryLightbarTier::Orange);
+static_assert(battery_lightbar_tier(0x16) == BatteryLightbarTier::Blue);
+static_assert(battery_lightbar_tier(0x18) == BatteryLightbarTier::Green);
 static_assert(battery_lightbar_tier(0x20) == BatteryLightbarTier::Green);
 static_assert(battery_lightbar_tier(0x0b) == BatteryLightbarTier::Invalid);
 static_assert(battery_lightbar_tier(0xa1) == BatteryLightbarTier::Invalid);
 static_assert(lightbar_color(BatteryLightbarTier::Red).red == 0xff &&
               lightbar_color(BatteryLightbarTier::Red).green == 0x00 &&
               lightbar_color(BatteryLightbarTier::Red).blue == 0x00);
-static_assert(lightbar_color(BatteryLightbarTier::Yellow).red == 0xff &&
-              lightbar_color(BatteryLightbarTier::Yellow).green == 0xff &&
-              lightbar_color(BatteryLightbarTier::Yellow).blue == 0x00);
+static_assert(lightbar_color(BatteryLightbarTier::Orange).red == 0xff &&
+              lightbar_color(BatteryLightbarTier::Orange).green == 0x64 &&
+              lightbar_color(BatteryLightbarTier::Orange).blue == 0x00);
+static_assert(lightbar_color(BatteryLightbarTier::Blue).red == 0x00 &&
+              lightbar_color(BatteryLightbarTier::Blue).green == 0x00 &&
+              lightbar_color(BatteryLightbarTier::Blue).blue == 0xff);
 static_assert(lightbar_color(BatteryLightbarTier::Green).red == 0x00 &&
               lightbar_color(BatteryLightbarTier::Green).green == 0xff &&
               lightbar_color(BatteryLightbarTier::Green).blue == 0x00);
 
 static BatteryLightbarTier current_battery_lightbar_tier = BatteryLightbarTier::Red;
 static bool battery_lightbar_update_pending = false;
+// Critical battery (<20% while discharging) pulses the lightbar red and
+// overrides every lightbar mode. battery_pulse_level is the current red value
+// of the triangle wave, read by apply_lightbar() so every outgoing state
+// packet carries the current pulse frame instead of fighting it.
+static bool battery_critical = false;
+static uint8_t battery_pulse_level = 0xff;
+static uint32_t battery_pulse_last_ms = 0;
 
 absolute_time_t inactive_time = 0; // 手柄长时间静默
 
@@ -982,9 +1002,27 @@ void init_feature() {
 void battery_lightbar_reset() {
     current_battery_lightbar_tier = BatteryLightbarTier::Red;
     battery_lightbar_update_pending = false;
+    battery_critical = false;
+    battery_pulse_level = 0xff;
+}
+
+bool battery_lightbar_critical() {
+    return battery_critical;
 }
 
 void apply_lightbar(SetStateData &state) {
+    // Critical battery pulse overrides every mode, host-controlled included.
+    if (battery_critical) {
+        state.AllowLedColor = 1;
+        state.ResetLights = 0;
+        state.AllowLightBrightnessChange = 1;
+        state.LightBrightness = LightBrightness::Bright;
+        state.LedRed = battery_pulse_level;
+        state.LedGreen = 0x00;
+        state.LedBlue = 0x00;
+        return;
+    }
+
     const Config_body &cfg = get_config();
     if (cfg.lightbar_mode == 1) {
         // Host-controlled: leave the host's lightbar bytes untouched.
@@ -1006,6 +1044,15 @@ void apply_lightbar(SetStateData &state) {
 }
 
 void battery_lightbar_note_report(const uint8_t battery_status) {
+    // Critical override arms on <20% while discharging only; charging shows
+    // the normal tier colors. Abnormal power states leave it unchanged, the
+    // same way the tier holds its last valid value.
+    const uint8_t level = battery_status & 0x0f;
+    const uint8_t power_state = battery_status >> 4;
+    if (power_state <= 0x02) {
+        battery_critical = power_state == 0x00 && level < 2;
+    }
+
     // Track the tier in every mode so a live switch to battery mode starts
     // from the current level, but only push updates while battery mode is on.
     const BatteryLightbarTier next_tier = battery_lightbar_tier(battery_status);
@@ -1022,6 +1069,42 @@ void battery_lightbar_note_report(const uint8_t battery_status) {
     if (update_state(state)) {
         battery_lightbar_update_pending = false;
     }
+}
+
+// Core-0 main-loop tick driving the critical-battery pulse. While critical,
+// advances an integer triangle wave and pushes a state packet per step; on the
+// critical->normal edge pushes one last packet so the active mode's color is
+// restored (a no-op packet in host mode - the host repaints on its next write).
+void battery_lightbar_tick() {
+    static bool was_critical = false;
+
+    if (!battery_critical || !bt_is_connected()) {
+        if (was_critical) {
+            was_critical = false;
+            battery_pulse_level = 0xff;
+            if (bt_is_connected()) {
+                const SetStateData state{};
+                update_state(state);
+            }
+        }
+        return;
+    }
+
+    was_critical = true;
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+    if (now - battery_pulse_last_ms < 40) {
+        return;
+    }
+    battery_pulse_last_ms = now;
+
+    // Triangle wave, 1.2 s period, red channel swept ~10% <-> 100%.
+    const uint32_t phase = now % 1200;
+    const uint32_t tri = phase < 600 ? phase : 1200 - phase; // 0..600
+    battery_pulse_level = static_cast<uint8_t>(26 + tri * 229 / 600);
+
+    // A full send FIFO just drops this frame; the next tick retries.
+    const SetStateData state{};
+    update_state(state);
 }
 
 bool update_state(const SetStateData &state) {
