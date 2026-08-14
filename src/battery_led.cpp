@@ -16,7 +16,7 @@ namespace {
 
 constexpr uint64_t REPORT_STALE_US = 2'000'000;  // assume disconnected if no report for 2 s
 constexpr uint64_t BLINK_PERIOD_US =   500'000;  // 1 Hz, 50% duty
-constexpr uint8_t  THRESHOLD_LEVEL = 1;          // PowerPercent <= 1 (i.e. <= 10%)
+constexpr uint8_t  THRESHOLD_LEVEL = 1;          // PowerPercent <= 1 (levels 0-1, i.e. below 20%)
 constexpr uint8_t  POWER_STATE_DISCHARGING = 0x0;
 
 uint64_t last_report_us = 0;

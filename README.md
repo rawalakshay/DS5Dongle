@@ -137,17 +137,20 @@ which makes the mic seem dead even though it is working.
 The firmware supports three lightbar modes, selectable via the `lightbar_mode` setting in the
 [web config](#configuration) or `tools/config_tool.py`:
 
-- **Battery tiers (default):** the lightbar shows the controller's battery state — orange from
-  20 to 60%, blue from 60 to 80%, green above 80% or when charging is complete. Host
-  applications cannot override the color.
-
-Below **20% while discharging**, the lightbar switches to a **pulsing red** warning that
-overrides *every* mode — including host-controlled and custom RGB — until the battery recovers
-or the controller starts charging (while charging, the normal tier colors show progress).
+- **Battery tiers (default):** the lightbar shows the controller's battery state — red below 20%
+  (solid while charging, pulsing while discharging — see below), orange from 20 to 60%, blue
+  from 60 to 80%, green above 80% or when charging is complete. Host applications cannot
+  override the color.
 - **Host-controlled:** the lightbar is left to the host — games and tools (Steam, DualSenseX, …)
   set the color, matching a real wired DualSense.
 - **Custom RGB:** the lightbar is forced to a fixed color of your choice
   (`lightbar_red` / `lightbar_green` / `lightbar_blue`, default red).
+
+Below **20% while discharging**, the lightbar switches to a **pulsing red** warning that
+overrides *every* mode — including host-controlled and custom RGB — until the battery recovers
+or the controller starts charging; while charging, the battery-tiers mode shows the normal tier
+colors as it fills. The [low-battery LED indicator](#low-battery-led-indicator) on the Pico
+blinks for the same condition.
 
 Mode changes apply immediately, e.g.:
 
@@ -162,7 +165,7 @@ Disable the combo with `lightbar_shortcut_enabled=0` if it clashes with a game's
 
 ### Low-battery LED indicator
 
-When the connected DualSense reports its battery at or below 10% (and it is not charging), the Pico onboard LED switches
+When the connected DualSense reports its battery below 20% (and it is not charging), the Pico onboard LED switches
 from solid-on to a 1 Hz blink so you can see the warning at a glance. The LED returns to solid-on as soon as the
 controller is plugged in or its reported level rises again. The blink also fires when `disable_pico_led` is set — the
 warning is treated as critical and overrides the LED-off preference; the LED returns to its disabled (off) state once

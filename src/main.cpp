@@ -103,7 +103,13 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
             }
             return;
         }
-        if (len > 55 && bt_is_connected()) {
+        // Everything below reads up to payload byte 60 and copies 63 bytes
+        // from data + 3, so drop truncated frames. The shortest legitimate
+        // packet is the 66-byte state_init_data injected on disconnect.
+        if (len < 66) {
+            return;
+        }
+        if (bt_is_connected()) {
             // Byte 52 of the 63-byte common payload carries battery level and power state.
             battery_lightbar_note_report(data[55]);
         }
@@ -275,10 +281,11 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     state.AllowMuteLight = 0;
                 }
 
-                // Outside host-controlled mode - or while the critical-battery
-                // pulse is active - do not let host applications release, fade,
-                // dim, or recolor the light bar.
-                if (config.lightbar_mode != 1 || battery_lightbar_critical()) {
+                // Outside host-controlled mode, do not let host applications
+                // release, fade, dim, or recolor the light bar. (During the
+                // critical-battery pulse, apply_lightbar enforces this for
+                // every caller and mode.)
+                if (config.lightbar_mode != 1) {
                     state.AllowColorLightFadeAnimation = 0;
                     state.LightFadeAnimation = LightFadeAnimation::Nothing;
                 }
@@ -286,6 +293,9 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
 
                 memcpy(outputData + 3, &state, sizeof(SetStateData));
                 bt_write(outputData, sizeof(outputData));
+                // Host reports carry the pulse frame while critical, so the
+                // pulse tick can skip its own sends while these are fresh.
+                battery_lightbar_note_host_forward();
 #if ENABLE_VERBOSE
                 printf_hexdump(outputData,sizeof(outputData));
 #endif

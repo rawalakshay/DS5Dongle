@@ -141,6 +141,7 @@ static_assert(battery_lightbar_tier(0x0a) == BatteryLightbarTier::Green);
 static_assert(battery_lightbar_tier(0x11) == BatteryLightbarTier::Red);
 static_assert(battery_lightbar_tier(0x15) == BatteryLightbarTier::Orange);
 static_assert(battery_lightbar_tier(0x16) == BatteryLightbarTier::Blue);
+static_assert(battery_lightbar_tier(0x17) == BatteryLightbarTier::Blue);
 static_assert(battery_lightbar_tier(0x18) == BatteryLightbarTier::Green);
 static_assert(battery_lightbar_tier(0x20) == BatteryLightbarTier::Green);
 static_assert(battery_lightbar_tier(0x0b) == BatteryLightbarTier::Invalid);
@@ -161,12 +162,34 @@ static_assert(lightbar_color(BatteryLightbarTier::Green).red == 0x00 &&
 static BatteryLightbarTier current_battery_lightbar_tier = BatteryLightbarTier::Red;
 static bool battery_lightbar_update_pending = false;
 // Critical battery (<20% while discharging) pulses the lightbar red and
-// overrides every lightbar mode. battery_pulse_level is the current red value
-// of the triangle wave, read by apply_lightbar() so every outgoing state
-// packet carries the current pulse frame instead of fighting it.
+// overrides every lightbar mode. The pulse value is a pure function of time
+// (battery_pulse_value), so every outgoing packet carries the exact phase.
 static bool battery_critical = false;
-static uint8_t battery_pulse_level = 0xff;
-static uint32_t battery_pulse_last_ms = 0;
+// One-shot repaint queued when critical clears; retried until a send succeeds.
+static bool battery_restore_pending = false;
+// Last lightbar color the host wrote (only host output reports reach
+// apply_lightbar with AllowLedColor already set). Used to repaint host-
+// controlled mode after a critical pulse ends; stock DS5 blue until seen.
+static LightbarColor host_lightbar_color = {0x00, 0x00, 0xff};
+// When the host streams output reports they already carry the pulse frame
+// via apply_lightbar, so the tick skips its own sends while this is fresh
+// to keep pressure off the send FIFO it shares with audio and rumble.
+static uint32_t battery_host_forward_ms = 0;
+
+constexpr uint32_t BATTERY_PULSE_PERIOD_MS = 1200;
+constexpr uint32_t BATTERY_PULSE_FRAME_MS = 40;
+constexpr uint32_t BATTERY_HOST_FRESH_MS = 100;
+constexpr uint8_t BATTERY_PULSE_FLOOR = 26; // dimmest red in the pulse
+constexpr uint8_t BATTERY_PULSE_SPAN = 229;
+static_assert(BATTERY_PULSE_FLOOR + BATTERY_PULSE_SPAN == 255);
+
+// Triangle wave: red swept FLOOR <-> 255 over BATTERY_PULSE_PERIOD_MS.
+static uint8_t battery_pulse_value() {
+    constexpr uint32_t half = BATTERY_PULSE_PERIOD_MS / 2;
+    const uint32_t phase = to_ms_since_boot(get_absolute_time()) % BATTERY_PULSE_PERIOD_MS;
+    const uint32_t tri = phase < half ? phase : BATTERY_PULSE_PERIOD_MS - phase; // 0..half
+    return static_cast<uint8_t>(BATTERY_PULSE_FLOOR + tri * BATTERY_PULSE_SPAN / half);
+}
 
 absolute_time_t inactive_time = 0; // 手柄长时间静默
 
@@ -1003,35 +1026,38 @@ void battery_lightbar_reset() {
     current_battery_lightbar_tier = BatteryLightbarTier::Red;
     battery_lightbar_update_pending = false;
     battery_critical = false;
-    battery_pulse_level = 0xff;
+    battery_restore_pending = false;
 }
 
-bool battery_lightbar_critical() {
-    return battery_critical;
+void battery_lightbar_note_host_forward() {
+    battery_host_forward_ms = to_ms_since_boot(get_absolute_time());
 }
 
 void apply_lightbar(SetStateData &state) {
-    // Critical battery pulse overrides every mode, host-controlled included.
+    // Only host output reports arrive here with AllowLedColor already set;
+    // remember the host's color so it can be restored after a critical pulse.
+    if (state.AllowLedColor) {
+        host_lightbar_color = {state.LedRed, state.LedGreen, state.LedBlue};
+    }
+
+    LightbarColor color{};
     if (battery_critical) {
-        state.AllowLedColor = 1;
-        state.ResetLights = 0;
-        state.AllowLightBrightnessChange = 1;
-        state.LightBrightness = LightBrightness::Bright;
-        state.LedRed = battery_pulse_level;
-        state.LedGreen = 0x00;
-        state.LedBlue = 0x00;
-        return;
+        // Critical battery pulse overrides every mode, host-controlled
+        // included. Also strip any fade-animation request so a host app
+        // cannot latch an animation over the warning.
+        state.AllowColorLightFadeAnimation = 0;
+        state.LightFadeAnimation = LightFadeAnimation::Nothing;
+        color = {battery_pulse_value(), 0x00, 0x00};
+    } else {
+        const Config_body &cfg = get_config();
+        if (cfg.lightbar_mode == 1) {
+            // Host-controlled: leave the host's lightbar bytes untouched.
+            return;
+        }
+        color = cfg.lightbar_mode == 2
+                    ? LightbarColor{cfg.lightbar_red, cfg.lightbar_green, cfg.lightbar_blue}
+                    : lightbar_color(current_battery_lightbar_tier);
     }
-
-    const Config_body &cfg = get_config();
-    if (cfg.lightbar_mode == 1) {
-        // Host-controlled: leave the host's lightbar bytes untouched.
-        return;
-    }
-
-    const LightbarColor color = cfg.lightbar_mode == 2
-                                    ? LightbarColor{cfg.lightbar_red, cfg.lightbar_green, cfg.lightbar_blue}
-                                    : lightbar_color(current_battery_lightbar_tier);
 
     // Keep the independent mute and player indicators under their existing control.
     state.AllowLedColor = 1;
@@ -1044,18 +1070,27 @@ void apply_lightbar(SetStateData &state) {
 }
 
 void battery_lightbar_note_report(const uint8_t battery_status) {
-    // Critical override arms on <20% while discharging only; charging shows
-    // the normal tier colors. Abnormal power states leave it unchanged, the
-    // same way the tier holds its last valid value.
-    const uint8_t level = battery_status & 0x0f;
-    const uint8_t power_state = battery_status >> 4;
-    if (power_state <= 0x02) {
-        battery_critical = power_state == 0x00 && level < 2;
+    const BatteryLightbarTier next_tier = battery_lightbar_tier(battery_status);
+
+    // Critical (pulse) arming, derived from the tier so the threshold has a
+    // single source. Discharging only - charging shows the tier colors - and
+    // invalid reports leave it unchanged, like the tier below. Once armed it
+    // holds through level 2 as a hysteresis band, so a level nibble bouncing
+    // at the Red boundary under rumble load cannot flap the pulse on and off.
+    if (next_tier != BatteryLightbarTier::Invalid) {
+        const bool discharging = (battery_status >> 4) == 0x00;
+        bool next_critical = discharging && next_tier == BatteryLightbarTier::Red;
+        if (battery_critical && discharging && (battery_status & 0x0f) == 2) {
+            next_critical = true;
+        }
+        if (battery_critical && !next_critical) {
+            battery_restore_pending = true; // repaint the active mode's color
+        }
+        battery_critical = next_critical;
     }
 
     // Track the tier in every mode so a live switch to battery mode starts
     // from the current level, but only push updates while battery mode is on.
-    const BatteryLightbarTier next_tier = battery_lightbar_tier(battery_status);
     if (next_tier != BatteryLightbarTier::Invalid && next_tier != current_battery_lightbar_tier) {
         current_battery_lightbar_tier = next_tier;
         battery_lightbar_update_pending = true;
@@ -1068,43 +1103,52 @@ void battery_lightbar_note_report(const uint8_t battery_status) {
     const SetStateData state{};
     if (update_state(state)) {
         battery_lightbar_update_pending = false;
+        battery_restore_pending = false; // this packet already repainted
     }
 }
 
-// Core-0 main-loop tick driving the critical-battery pulse. While critical,
-// advances an integer triangle wave and pushes a state packet per step; on the
-// critical->normal edge pushes one last packet so the active mode's color is
-// restored (a no-op packet in host mode - the host repaints on its next write).
+// Core-0 main-loop tick pacing the critical-battery pulse and the one-shot
+// repaint after it ends. While the host streams output reports they already
+// carry the pulse frame (apply_lightbar), so the tick only fills the gaps.
 void battery_lightbar_tick() {
-    static bool was_critical = false;
-
-    if (!battery_critical || !bt_is_connected()) {
-        if (was_critical) {
-            was_critical = false;
-            battery_pulse_level = 0xff;
-            if (bt_is_connected()) {
-                const SetStateData state{};
-                update_state(state);
-            }
-        }
+    if (!bt_is_connected()) {
         return;
     }
-
-    was_critical = true;
     const uint32_t now = to_ms_since_boot(get_absolute_time());
-    if (now - battery_pulse_last_ms < 40) {
+
+    if (battery_critical) {
+        static uint32_t last_frame_ms = 0;
+        if (now - battery_host_forward_ms < BATTERY_HOST_FRESH_MS) {
+            return;
+        }
+        if (now - last_frame_ms < BATTERY_PULSE_FRAME_MS) {
+            return;
+        }
+        // Stamp before sending: a dropped frame (full FIFO) just waits for
+        // the next slot instead of hammering the queue every loop iteration.
+        last_frame_ms = now;
+        const SetStateData state{};
+        update_state(state);
         return;
     }
-    battery_pulse_last_ms = now;
 
-    // Triangle wave, 1.2 s period, red channel swept ~10% <-> 100%.
-    const uint32_t phase = now % 1200;
-    const uint32_t tri = phase < 600 ? phase : 1200 - phase; // 0..600
-    battery_pulse_level = static_cast<uint8_t>(26 + tri * 229 / 600);
-
-    // A full send FIFO just drops this frame; the next tick retries.
-    const SetStateData state{};
-    update_state(state);
+    if (battery_restore_pending) {
+        SetStateData state{};
+        if (get_config().lightbar_mode == 1) {
+            // apply_lightbar leaves host mode untouched, so fill the restore
+            // color here: the host's last written color (stock blue if none).
+            state.AllowLedColor = 1;
+            state.ResetLights = 0;
+            state.AllowLightBrightnessChange = 1;
+            state.LightBrightness = LightBrightness::Bright;
+            state.LedRed = host_lightbar_color.red;
+            state.LedGreen = host_lightbar_color.green;
+            state.LedBlue = host_lightbar_color.blue;
+        }
+        if (update_state(state)) {
+            battery_restore_pending = false;
+        }
+    }
 }
 
 bool update_state(const SetStateData &state) {
