@@ -185,11 +185,17 @@ Config_body& get_config() {
 
 void set_config(const uint8_t *new_config, const uint16_t len) {
     const bool controller_connected = bt_is_connected();
+    const uint8_t prev_lightbar_mode = config.body.lightbar_mode;
     gpio_on_disconnect();
 
     const auto copy_len = len < sizeof(Config_body) ? len : sizeof(Config_body);
     memcpy(&config.body, new_config, copy_len);
     config_valid();
+
+    if (config.body.lightbar_mode != prev_lightbar_mode) {
+        // update_state() below cannot repaint host-controlled mode on its own.
+        lightbar_note_mode_changed();
+    }
 
     if (controller_connected && config.body.status_gpio_mode != STATUS_GPIO_MODE_BUTTON) {
         gpio_on_connect();
@@ -218,10 +224,15 @@ void set_config(const uint8_t *new_config, const uint16_t len) {
 
 void set_config(const Config_body &new_config) {
     const bool controller_connected = bt_is_connected();
+    const uint8_t prev_lightbar_mode = config.body.lightbar_mode;
     gpio_on_disconnect();
 
     config.body = new_config;
     config_valid();
+
+    if (config.body.lightbar_mode != prev_lightbar_mode) {
+        lightbar_note_mode_changed();
+    }
 
     if (controller_connected && config.body.status_gpio_mode != STATUS_GPIO_MODE_BUTTON) {
         gpio_on_connect();

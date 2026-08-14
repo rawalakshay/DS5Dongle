@@ -6,18 +6,15 @@
 
 #include <cstdint>
 
+#include "bt.h"
 #include "config.h"
 #include "pico/cyw43_arch.h"
 #include "pico/time.h"
-
-extern uint8_t interrupt_in_data[63];
 
 namespace {
 
 constexpr uint64_t REPORT_STALE_US = 2'000'000;  // assume disconnected if no report for 2 s
 constexpr uint64_t BLINK_PERIOD_US =   500'000;  // 1 Hz, 50% duty
-constexpr uint8_t  THRESHOLD_LEVEL = 1;          // PowerPercent <= 1 (levels 0-1, i.e. below 20%)
-constexpr uint8_t  POWER_STATE_DISCHARGING = 0x0;
 
 uint64_t last_report_us = 0;
 uint64_t last_toggle_us = 0;
@@ -63,12 +60,9 @@ void battery_led_tick(void) {
         return;
     }
 
-    const uint8_t b   = interrupt_in_data[52];
-    const uint8_t pct = b & 0x0F;
-    const uint8_t st  = (b >> 4) & 0x0F;
-    const bool low    = (st == POWER_STATE_DISCHARGING) && (pct <= THRESHOLD_LEVEL);
-
-    if (low) {
+    // Shares bt.cpp's critical state (Red tier while discharging, hysteresis
+    // included) so this LED and the lightbar pulse warn on the same condition.
+    if (battery_lightbar_critical()) {
         // Critical warning: override disable_pico_led so the user always sees it.
         if (!blinking) {
             blinking = true;

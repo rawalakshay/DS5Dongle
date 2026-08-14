@@ -1,7 +1,7 @@
 //
 // Low-battery LED indicator for the Pico onboard LED.
-// Reads PowerPercent / PowerState from interrupt_in_data[52]
-// (DualSense BT 0x31 report, see USBGetStateData in utils.h).
+// Takes its low-battery state from bt.cpp's battery_lightbar_critical(), so
+// this LED and the lightbar's red pulse warn on exactly the same condition.
 //
 
 #pragma once
@@ -22,5 +22,5 @@ void battery_led_note_report(void);
 // (now-stale) battery byte until a fresh report arrives on the next
 // connection. Without this, the LED can stay frozen in whichever state
 // it was at the moment of disconnect, or briefly resume blinking during
-// reconnect retries while interrupt_in_data[52] still reads low.
+// reconnect retries while the cached battery state still reads low.
 void battery_led_on_disconnect(void);

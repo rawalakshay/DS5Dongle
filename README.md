@@ -137,16 +137,17 @@ which makes the mic seem dead even though it is working.
 The firmware supports three lightbar modes, selectable via the `lightbar_mode` setting in the
 [web config](#configuration) or `tools/config_tool.py`:
 
-- **Battery tiers (default):** the lightbar shows the controller's battery state — red below 20%
-  (solid while charging, pulsing while discharging — see below), orange from 20 to 60%, blue
-  from 60 to 80%, green above 80% or when charging is complete. Host applications cannot
-  override the color.
+- **Battery tiers (default):** the lightbar shows the controller's battery state in vivid
+  quartiles — red at 0–25% (solid while charging, pulsing while discharging — see below),
+  yellow at 26–50%, cyan at 51–75%, green at 76–100% or when charging is complete. The
+  controller only reports charge in 10% steps, so in practice red covers 0–20%, yellow
+  30–50%, cyan 60–70% and green 80–100%. Host applications cannot override the color.
 - **Host-controlled:** the lightbar is left to the host — games and tools (Steam, DualSenseX, …)
   set the color, matching a real wired DualSense.
 - **Custom RGB:** the lightbar is forced to a fixed color of your choice
   (`lightbar_red` / `lightbar_green` / `lightbar_blue`, default red).
 
-Below **20% while discharging**, the lightbar switches to a **pulsing red** warning that
+At **25% or below while discharging**, the lightbar switches to a **pulsing red** warning that
 overrides *every* mode — including host-controlled and custom RGB — until the battery recovers
 or the controller starts charging; while charging, the battery-tiers mode shows the normal tier
 colors as it fills. The [low-battery LED indicator](#low-battery-led-indicator) on the Pico
@@ -160,14 +161,21 @@ python tools/config_tool.py set lightbar_mode=2 lightbar_red=128 lightbar_green=
 
 You can also cycle through the modes **from the controller**: hold **D-pad Left + L1 + Triangle**
 for a fifth of a second. Each press-and-hold advances battery tiers → host-controlled → custom RGB → …
+The controller answers every switch with a vibration whose **pulse count tells you the mode you
+landed on** — 1 pulse = battery tiers, 2 pulses = host-controlled, 3 pulses = custom RGB — so
+you can cycle by feel without looking at the lightbar. (A game or tool that streams its own
+rumble will overwrite the confirmation, so the pulses are reliable in menus and on the desktop
+rather than mid-game.)
 The new mode is written to flash about 10 seconds after the last switch, so it survives replugging.
 Disable the combo with `lightbar_shortcut_enabled=0` if it clashes with a game's controls.
 
 ### Low-battery LED indicator
 
-When the connected DualSense reports its battery below 20% (and it is not charging), the Pico onboard LED switches
+When the connected DualSense reports its battery at 25% or below (and it is not charging), the Pico onboard LED switches
 from solid-on to a 1 Hz blink so you can see the warning at a glance. The LED returns to solid-on as soon as the
-controller is plugged in or its reported level rises again. The blink also fires when `disable_pico_led` is set — the
+controller is plugged in, or once its reported level has climbed clear of the warning band (the warning holds through
+the first step of recovery so a battery hovering at the boundary does not flicker). The blink and the lightbar's red
+pulse always agree — they read the same state. The blink also fires when `disable_pico_led` is set — the
 warning is treated as critical and overrides the LED-off preference; the LED returns to its disabled (off) state once
 the battery recovers or the controller starts charging.
 

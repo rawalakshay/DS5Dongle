@@ -41,6 +41,8 @@ void battery_lightbar_reset();
 void battery_lightbar_note_report(uint8_t battery_status);
 void battery_lightbar_tick();
 void battery_lightbar_note_host_forward();
+bool battery_lightbar_critical();
+void lightbar_note_mode_changed();
 void apply_lightbar(SetStateData& state);
 bool update_state(const SetStateData& state);
 
