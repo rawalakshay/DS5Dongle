@@ -78,6 +78,76 @@ struct send_element {
     size_t len;
 };
 
+enum class BatteryLightbarTier : uint8_t {
+    Invalid,
+    Red,
+    Yellow,
+    Green,
+};
+
+struct LightbarColor {
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+};
+
+constexpr BatteryLightbarTier battery_lightbar_tier(const uint8_t battery_status) {
+    const uint8_t level = battery_status & 0x0f;
+    const uint8_t power_state = battery_status >> 4;
+
+    if (power_state == 0x02) {
+        return BatteryLightbarTier::Green;
+    }
+    if ((power_state != 0x00 && power_state != 0x01) || level > 10) {
+        return BatteryLightbarTier::Invalid;
+    }
+    if (level < 2) {
+        return BatteryLightbarTier::Red;
+    }
+    if (level < 7) {
+        return BatteryLightbarTier::Yellow;
+    }
+    return BatteryLightbarTier::Green;
+}
+
+constexpr LightbarColor lightbar_color(const BatteryLightbarTier tier) {
+    switch (tier) {
+        case BatteryLightbarTier::Yellow:
+            return {0xff, 0xff, 0x00};
+        case BatteryLightbarTier::Green:
+            return {0x00, 0xff, 0x00};
+        case BatteryLightbarTier::Invalid:
+        case BatteryLightbarTier::Red:
+        default:
+            return {0xff, 0x00, 0x00};
+    }
+}
+
+static_assert(battery_lightbar_tier(0x00) == BatteryLightbarTier::Red);
+static_assert(battery_lightbar_tier(0x01) == BatteryLightbarTier::Red);
+static_assert(battery_lightbar_tier(0x02) == BatteryLightbarTier::Yellow);
+static_assert(battery_lightbar_tier(0x06) == BatteryLightbarTier::Yellow);
+static_assert(battery_lightbar_tier(0x07) == BatteryLightbarTier::Green);
+static_assert(battery_lightbar_tier(0x0a) == BatteryLightbarTier::Green);
+static_assert(battery_lightbar_tier(0x11) == BatteryLightbarTier::Red);
+static_assert(battery_lightbar_tier(0x16) == BatteryLightbarTier::Yellow);
+static_assert(battery_lightbar_tier(0x17) == BatteryLightbarTier::Green);
+static_assert(battery_lightbar_tier(0x20) == BatteryLightbarTier::Green);
+static_assert(battery_lightbar_tier(0x0b) == BatteryLightbarTier::Invalid);
+static_assert(battery_lightbar_tier(0xa1) == BatteryLightbarTier::Invalid);
+static_assert(lightbar_color(BatteryLightbarTier::Red).red == 0xff &&
+              lightbar_color(BatteryLightbarTier::Red).green == 0x00 &&
+              lightbar_color(BatteryLightbarTier::Red).blue == 0x00);
+static_assert(lightbar_color(BatteryLightbarTier::Yellow).red == 0xff &&
+              lightbar_color(BatteryLightbarTier::Yellow).green == 0xff &&
+              lightbar_color(BatteryLightbarTier::Yellow).blue == 0x00);
+static_assert(lightbar_color(BatteryLightbarTier::Green).red == 0x00 &&
+              lightbar_color(BatteryLightbarTier::Green).green == 0xff &&
+              lightbar_color(BatteryLightbarTier::Green).blue == 0x00);
+
+static BatteryLightbarTier current_battery_lightbar_tier = BatteryLightbarTier::Red;
+static bool battery_lightbar_update_pending = false;
+
 absolute_time_t inactive_time = 0; // 手柄长时间静默
 
 const uint8_t state_init_data[66] = {
@@ -615,6 +685,7 @@ static void __not_in_flash_func(hci_packet_handler)(uint8_t packet_type, uint16_
             bt_rssi = 0;
             hid_control_cid = 0;
             hid_interrupt_cid = 0;
+            battery_lightbar_reset();
             gpio_on_disconnect();
             while (queue_try_remove(&send_fifo, NULL)) {
             }
@@ -740,18 +811,12 @@ static void __not_in_flash_func(l2cap_packet_handler)(uint8_t packet_type, uint1
                     printf("Init DualSense\n");
 
                     init_feature();
+                    battery_lightbar_reset();
                     SetStateData state = {
                         .AllowAudioControl = 1,
-                        .AllowLedColor = 1,
                         .MicSelect = get_config().mic_select,
-                        .AllowLightBrightnessChange = 1,
                         .AllowColorLightFadeAnimation = 1,
                         .LightFadeAnimation = LightFadeAnimation::FadeOut,
-                        .LightBrightness = LightBrightness::Bright,
-                        // RGB LED: R, G, B (Nijika Color!)✨
-                        .LedRed = 0xff,
-                        .LedGreen = 0xd7,
-                        .LedBlue = 0x00,
                     };
                     update_state(state);
 
@@ -843,8 +908,8 @@ void bt_control_send(const uint8_t *data, uint16_t len) {
     }
 }
 
-void __not_in_flash_func(bt_write)(const uint8_t *data, const uint16_t len) {
-    if (hid_interrupt_cid == 0) return;
+bool __not_in_flash_func(bt_write)(const uint8_t *data, const uint16_t len) {
+    if (hid_interrupt_cid == 0) return false;
     static send_element packet{};
     packet.len = len + 1;
     packet.data[0] = 0xA2;
@@ -853,11 +918,12 @@ void __not_in_flash_func(bt_write)(const uint8_t *data, const uint16_t len) {
 
     if (!queue_try_add(&send_fifo, &packet)) {
         printf("[L2CAP bt_write] Error: Failed to add packet to send FIFO\n");
-        return;
+        return false;
     }
     if (queue_get_level(&send_fifo) == 1) {
         l2cap_request_can_send_now_event(hid_interrupt_cid);
     }
+    return true;
 }
 
 vector<uint8_t> get_feature_data(uint8_t reportId, uint16_t len) {
@@ -913,12 +979,50 @@ void init_feature() {
     get_feature_data(0x05, 41);
 }
 
-void update_state(const SetStateData &state) {
+void battery_lightbar_reset() {
+    current_battery_lightbar_tier = BatteryLightbarTier::Red;
+    battery_lightbar_update_pending = false;
+}
+
+void apply_battery_lightbar(SetStateData &state) {
+    const LightbarColor color = lightbar_color(current_battery_lightbar_tier);
+
+    // Keep the independent mute and player indicators under their existing control.
+    state.AllowLedColor = 1;
+    state.ResetLights = 0;
+    state.AllowLightBrightnessChange = 1;
+    state.LightBrightness = LightBrightness::Bright;
+    state.LedRed = color.red;
+    state.LedGreen = color.green;
+    state.LedBlue = color.blue;
+}
+
+void battery_lightbar_note_report(const uint8_t battery_status) {
+    const BatteryLightbarTier next_tier = battery_lightbar_tier(battery_status);
+    if (next_tier != BatteryLightbarTier::Invalid && next_tier != current_battery_lightbar_tier) {
+        current_battery_lightbar_tier = next_tier;
+        battery_lightbar_update_pending = true;
+    }
+
+    if (!battery_lightbar_update_pending) {
+        return;
+    }
+
+    const SetStateData state{};
+    if (update_state(state)) {
+        battery_lightbar_update_pending = false;
+    }
+}
+
+bool update_state(const SetStateData &state) {
+    SetStateData enforced_state = state;
+    apply_battery_lightbar(enforced_state);
+
     uint8_t pkt[142]{};
     pkt[0] = 0x32;
     pkt[1] = 0x10;
     pkt[2] = 0x90;
     pkt[3] = 0x3f;
-    memcpy(pkt + 4, &state, sizeof(SetStateData));
-    bt_write(pkt, sizeof(pkt));
+    memcpy(pkt + 4, &enforced_state, sizeof(SetStateData));
+    return bt_write(pkt, sizeof(pkt));
 }

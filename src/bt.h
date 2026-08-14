@@ -27,7 +27,7 @@ void bt_set_scan_idle();
 void bt_set_scan_active();
 void dse_unlock_task();
 bool bt_dse_profiles_ready();
-void bt_write(const uint8_t *data, uint16_t len);
+bool bt_write(const uint8_t *data, uint16_t len);
 void bt_get_signal_strength(int8_t *rssi);
 std::vector<uint8_t> get_feature_data(uint8_t reportId,uint16_t len);
 void init_feature();
@@ -37,6 +37,9 @@ void bt_inquiring_led();
 void bt_bootsel_click_action();
 void bt_bootsel_hold_action();
 void bt_blacklist_persist_if_dirty();
-void update_state(const SetStateData& state);
+void battery_lightbar_reset();
+void battery_lightbar_note_report(uint8_t battery_status);
+void apply_battery_lightbar(SetStateData& state);
+bool update_state(const SetStateData& state);
 
 #endif //DS5_BRIDGE_BT_H

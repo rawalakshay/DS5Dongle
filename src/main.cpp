@@ -102,6 +102,10 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
             }
             return;
         }
+        if (len > 55 && bt_is_connected()) {
+            // Byte 52 of the 63-byte common payload carries battery level and power state.
+            battery_lightbar_note_report(data[55]);
+        }
         if ((data[56] & 1) != (interrupt_in_data[53] & 1)) {
             set_headset(data[56] & 1);
         }
@@ -268,6 +272,11 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     state.AllowAudioMute = 0;
                     state.AllowMuteLight = 0;
                 }
+
+                // Do not let host applications release, fade, dim, or recolor the light bar.
+                state.AllowColorLightFadeAnimation = 0;
+                state.LightFadeAnimation = LightFadeAnimation::Nothing;
+                apply_battery_lightbar(state);
 
                 memcpy(outputData + 3, &state, sizeof(SetStateData));
                 bt_write(outputData, sizeof(outputData));
