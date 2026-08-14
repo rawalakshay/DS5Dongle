@@ -11,6 +11,7 @@
 #include "bt.h"
 #include "config.h"
 #include "device/usbd.h"
+#include "pico/bootrom.h"
 #include "pico/time.h"
 #include "audio.h"
 #include "wake.h"
@@ -80,6 +81,7 @@ void pico_cmd_set(uint8_t report_id, uint8_t const *buffer, uint16_t bufsize) {
     // 0x01 update config in variable
     // 0x02 write config to flash
     // 0x03 reconnect tinyusb device;
+    // 0x04 reboot into BOOTSEL (USB bootloader);
     if (buffer[0] == 0x01) {
 #if ENABLE_VERBOSE
         printf("[CMD] Enter config set func\n");
@@ -96,5 +98,11 @@ void pico_cmd_set(uint8_t report_id, uint8_t const *buffer, uint16_t bufsize) {
         tud_disconnect();
         sleep_ms(150);
         tud_connect();
+    }
+    if (buffer[0] == 0x04) {
+        // Same path as the BOOTSEL triple-click gesture. The device drops off
+        // the bus mid-request; host tools treat the send as fire-and-forget.
+        printf("[CMD] Reboot to BOOTSEL\n");
+        reset_usb_boot(0, 0); // noreturn
     }
 }

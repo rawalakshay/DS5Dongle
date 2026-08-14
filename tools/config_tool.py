@@ -9,6 +9,7 @@ Protocol (see src/cmd.cpp / src/config.h):
       funcid 0x01 + body   -> update config in RAM (firmware clamps invalid values)
       funcid 0x02          -> persist config to flash
       funcid 0x03          -> reconnect the USB device
+      funcid 0x04          -> reboot into BOOTSEL (see reboot_bootsel.py)
 
 Config_body is a packed struct; this tool derives the binary layout from FIELDS.
 
@@ -45,11 +46,12 @@ REPORT_GET_VERSION = 0xF8  # GET_REPORT: firmware version string
 FUNC_UPDATE = 0x01       # update config in RAM
 FUNC_SAVE = 0x02         # persist to flash
 FUNC_RECONNECT = 0x03    # reconnect tinyusb device
+FUNC_BOOTSEL = 0x04      # reboot into BOOTSEL (used by reboot_bootsel.py)
 
 SET_DATA_LEN = 63        # data bytes after the report id (descriptor report count 0x3F)
 FEATURE_REPORT_LEN = SET_DATA_LEN + 1  # report id + descriptor report count
 
-CONFIG_VERSION = 5       # src/config.cpp CONFIG_VERSION (display only)
+CONFIG_VERSION = 6       # src/config.cpp CONFIG_VERSION (display only)
 
 # struct.pack/unpack codes per field kind.
 KIND_TO_CODE = {"u8": "B", "float": "f"}
@@ -78,6 +80,11 @@ FIELDS = [
     ("lock_volume",        "u8",    lambda v: v in (0, 1),       "0/1 (ignore the volume change from SetStateData(game or software))"),
     ("status_gpio_pin",    "u8",    lambda v: 0 <= v <= 255,     "GPIO number (255 disables; firmware rejects board-reserved pins)"),
     ("status_gpio_mode",   "u8",    lambda v: v in (0, 1),       "0:pull high 1:200ms button pulse"),
+    ("lightbar_mode",      "u8",    lambda v: v in (0, 1, 2),    "0:battery tiers 1:host-controlled 2:custom RGB"),
+    ("lightbar_red",       "u8",    lambda v: 0 <= v <= 255,     "[0, 255] custom color R (lightbar_mode 2)"),
+    ("lightbar_green",     "u8",    lambda v: 0 <= v <= 255,     "[0, 255] custom color G (lightbar_mode 2)"),
+    ("lightbar_blue",      "u8",    lambda v: 0 <= v <= 255,     "[0, 255] custom color B (lightbar_mode 2)"),
+    ("lightbar_shortcut_enabled", "u8", lambda v: v in (0, 1),   "0/1 (D-pad Left + L1 + Triangle cycles lightbar_mode)"),
 ]
 FIELD_NAMES = [f[0] for f in FIELDS]
 # Little-endian, no padding -- matches __attribute__((packed)) Config_body.

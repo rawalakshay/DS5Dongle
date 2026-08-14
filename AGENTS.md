@@ -23,6 +23,7 @@
 - `src/usb.cpp`: UAC1 mute/volume control requests and translation into controller `SetStateData`.
 - `src/config.*` and `src/cmd.*`: packed persistent configuration and vendor feature reports `0xF6`-`0xF9`.
 - `src/wake.*` and `src/ps_shortcut.*`: S3 remote-wake state machine using F15, and PS-button Win+G / Win+Tab keyboard shortcuts.
+- `src/light_shortcut.*`: D-pad Left + L1 + Triangle combo that cycles `lightbar_mode`, with a deferred flash save.
 - `src/dse.*`: DualSense Edge unlock, paced profile snapshot prefetch, and post-save refresh machinery.
 - `src/button_functions.*`: BOOTSEL gesture FSM (single pair/switch, double reboot, triple bootloader, long clear pairings).
 - `src/battery_led.*` and `src/status_gpio.*`: low-battery indication and configurable connection GPIO output.
@@ -50,8 +51,8 @@
 
 ## Configuration protocol
 
-- `Config_body` is packed and persisted in the final flash sector. Schema version is currently `5`.
-- HID feature reports: `0xF6` updates/saves/reconnects, `0xF7` reads config, `0xF8` reads firmware version, and `0xF9` reads RSSI plus live audio-gating flags.
+- `Config_body` is packed and persisted in the final flash sector. Schema version is currently `6`.
+- HID feature reports: `0xF6` updates/saves/reconnects/reboots-to-BOOTSEL (functions `0x01`-`0x04`), `0xF7` reads config, `0xF8` reads firmware version, and `0xF9` reads RSSI plus live audio-gating flags.
 - If fields are added, removed, reordered, or resized, update `Config_body` and `tools/config_tool.py:FIELDS` together and bump `CONFIG_VERSION` for a breaking on-flash layout change.
 - Keep configuration validation ranges aligned between firmware and the Python tool.
 
@@ -96,6 +97,5 @@ There is no checked-in unit/integration test suite. For firmware changes, run at
 
 - `tools/build-macos.sh`, `tools/build-windows.ps1`, and `boards/build_waveshare_rp2350b_plus_w.sh` still pin or mention Pico SDK `2.2.0` / TinyUSB `0.20.0`; they are behind the current CMake/CI/README pins.
 - Those helper scripts still describe a separate `ENABLE_WAKE_HID` build even though current CMake always compiles wake/keyboard support and gates it at runtime.
-- `tools/reboot_bootsel.py` sends function `0x04`, but current `src/cmd.cpp` implements only `0x01` update, `0x02` save, and `0x03` reconnect. Do not assume host-triggered BOOTSEL works without reconciling that mismatch.
 - `README.CN.md` still describes the old overclock and separate wake branch; use the English README and code for current behavior.
 - DSE profile-write forwarding in `main.cpp` is currently commented out even though refresh machinery exists in `dse.cpp`; verify actual support before changing or documenting profile writes.

@@ -984,8 +984,16 @@ void battery_lightbar_reset() {
     battery_lightbar_update_pending = false;
 }
 
-void apply_battery_lightbar(SetStateData &state) {
-    const LightbarColor color = lightbar_color(current_battery_lightbar_tier);
+void apply_lightbar(SetStateData &state) {
+    const Config_body &cfg = get_config();
+    if (cfg.lightbar_mode == 1) {
+        // Host-controlled: leave the host's lightbar bytes untouched.
+        return;
+    }
+
+    const LightbarColor color = cfg.lightbar_mode == 2
+                                    ? LightbarColor{cfg.lightbar_red, cfg.lightbar_green, cfg.lightbar_blue}
+                                    : lightbar_color(current_battery_lightbar_tier);
 
     // Keep the independent mute and player indicators under their existing control.
     state.AllowLedColor = 1;
@@ -998,13 +1006,15 @@ void apply_battery_lightbar(SetStateData &state) {
 }
 
 void battery_lightbar_note_report(const uint8_t battery_status) {
+    // Track the tier in every mode so a live switch to battery mode starts
+    // from the current level, but only push updates while battery mode is on.
     const BatteryLightbarTier next_tier = battery_lightbar_tier(battery_status);
     if (next_tier != BatteryLightbarTier::Invalid && next_tier != current_battery_lightbar_tier) {
         current_battery_lightbar_tier = next_tier;
         battery_lightbar_update_pending = true;
     }
 
-    if (!battery_lightbar_update_pending) {
+    if (get_config().lightbar_mode != 0 || !battery_lightbar_update_pending) {
         return;
     }
 
@@ -1016,7 +1026,7 @@ void battery_lightbar_note_report(const uint8_t battery_status) {
 
 bool update_state(const SetStateData &state) {
     SetStateData enforced_state = state;
-    apply_battery_lightbar(enforced_state);
+    apply_lightbar(enforced_state);
 
     uint8_t pkt[142]{};
     pkt[0] = 0x32;

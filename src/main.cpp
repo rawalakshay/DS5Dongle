@@ -17,6 +17,7 @@
 #ifdef ENABLE_WAKE_HID
 #include "ps_shortcut.h"
 #endif
+#include "light_shortcut.h"
 #include "hardware/clocks.h"
 #include "hardware/vreg.h"
 #include "hardware/watchdog.h"
@@ -134,6 +135,7 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
         #ifdef ENABLE_WAKE_HID
         ps_shortcut_tick(data + 3, len - 3);
         #endif
+        light_shortcut_tick(data + 3, len - 3);
 
         if (get_config().polling_rate_mode != 2) {
             memcpy(interrupt_in_data, data + 3, 63);
@@ -273,10 +275,13 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     state.AllowMuteLight = 0;
                 }
 
-                // Do not let host applications release, fade, dim, or recolor the light bar.
-                state.AllowColorLightFadeAnimation = 0;
-                state.LightFadeAnimation = LightFadeAnimation::Nothing;
-                apply_battery_lightbar(state);
+                // Outside host-controlled mode, do not let host applications
+                // release, fade, dim, or recolor the light bar.
+                if (config.lightbar_mode != 1) {
+                    state.AllowColorLightFadeAnimation = 0;
+                    state.LightFadeAnimation = LightFadeAnimation::Nothing;
+                }
+                apply_lightbar(state); // no-op in host-controlled mode
 
                 memcpy(outputData + 3, &state, sizeof(SetStateData));
                 bt_write(outputData, sizeof(outputData));
@@ -383,5 +388,6 @@ int main() {
         button_check();
         bt_inquiring_led();
         dse_task();
+        light_shortcut_task();
     }
 }

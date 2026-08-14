@@ -16,7 +16,7 @@
 #include "pico/flash.h"
 
 constexpr uint32_t CONFIG_MAGIC = 0x66ccff00;
-constexpr uint16_t CONFIG_VERSION = 5; // 如果想要强制重置配置，再更新 CONFIG_VERSION。
+constexpr uint16_t CONFIG_VERSION = 6; // 如果想要强制重置配置，再更新 CONFIG_VERSION。
 constexpr uint32_t CONFIG_FLASH_OFFSET = PICO_FLASH_SIZE_BYTES - FLASH_SECTOR_SIZE;
 static Config config{};
 bool is_dse = false;
@@ -49,6 +49,11 @@ void config_valid() {
     if (body->config_version != CONFIG_VERSION) {
         memset(body, 0xFF, sizeof(Config_body));
         body->config_version = CONFIG_VERSION;
+        // The custom lightbar color has no invalid range, so the 0xFF fill
+        // would otherwise stand as the default. Default to red explicitly.
+        body->lightbar_red = 0xff;
+        body->lightbar_green = 0x00;
+        body->lightbar_blue = 0x00;
         printf("[Config] Warning: Config may breaking change. Reset to default\n");
     }
     if (std::isnan(body->haptics_gain) || body->haptics_gain < 1.0f || body->haptics_gain > 2.0f) {
@@ -122,6 +127,15 @@ void config_valid() {
     if (body->status_gpio_mode > STATUS_GPIO_MODE_BUTTON) {
         body->status_gpio_mode = 0;
         printf("[Config] status_gpio_mode is invalid\n");
+    }
+    if (body->lightbar_mode > 2) {
+        body->lightbar_mode = 0;
+        printf("[Config] lightbar_mode is invalid\n");
+    }
+    // lightbar_red/green/blue: every uint8_t value is a valid color component.
+    if (body->lightbar_shortcut_enabled > 1) {
+        body->lightbar_shortcut_enabled = 1; // default: enabled
+        printf("[Config] lightbar_shortcut_enabled is invalid\n");
     }
 }
 

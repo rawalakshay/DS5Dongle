@@ -27,6 +27,11 @@ struct __attribute__((packed)) Config_body {
     uint8_t lock_volume; // bool
     uint8_t status_gpio_pin; // board-usable GPIO, 0xff: disabled
     uint8_t status_gpio_mode; // 0: high while connected, 1: button pulse on connect
+    uint8_t lightbar_mode; // 0: battery tiers, 1: host-controlled, 2: custom RGB
+    uint8_t lightbar_red; // custom lightbar color, used when lightbar_mode == 2
+    uint8_t lightbar_green;
+    uint8_t lightbar_blue;
+    uint8_t lightbar_shortcut_enabled; // bool: D-pad Left + L1 + Triangle cycles lightbar_mode
 };
 
 struct __attribute__((packed)) Config {

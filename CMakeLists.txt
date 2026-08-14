@@ -120,6 +120,7 @@ add_executable(ds5-bridge
         src/config.cpp
         src/status_gpio.cpp
         src/cmd.cpp
+        src/light_shortcut.cpp
         src/ram_mem.c
         src/fake_ds5.h
 )

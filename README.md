@@ -132,6 +132,30 @@ on Windows. After selecting it as your recording device, raise its input/capture
 level in your OS: Windows in particular often defaults it to 0 (or very low),
 which makes the mic seem dead even though it is working.
 
+### Lightbar
+
+The firmware supports three lightbar modes, selectable via the `lightbar_mode` setting in the
+[web config](#configuration) or `tools/config_tool.py`:
+
+- **Battery tiers (default):** the lightbar shows the controller's battery state — red below 20%,
+  yellow below 70%, green otherwise or when charging is complete. Host applications cannot
+  override the color.
+- **Host-controlled:** the lightbar is left to the host — games and tools (Steam, DualSenseX, …)
+  set the color, matching a real wired DualSense.
+- **Custom RGB:** the lightbar is forced to a fixed color of your choice
+  (`lightbar_red` / `lightbar_green` / `lightbar_blue`, default red).
+
+Mode changes apply immediately, e.g.:
+
+```sh
+python tools/config_tool.py set lightbar_mode=2 lightbar_red=128 lightbar_green=0 lightbar_blue=255
+```
+
+You can also cycle through the modes **from the controller**: hold **D-pad Left + L1 + Triangle**
+for a fifth of a second. Each press-and-hold advances battery tiers → host-controlled → custom RGB → …
+The new mode is written to flash about 10 seconds after the last switch, so it survives replugging.
+Disable the combo with `lightbar_shortcut_enabled=0` if it clashes with a game's controls.
+
 ### Low-battery LED indicator
 
 When the connected DualSense reports its battery at or below 10% (and it is not charging), the Pico onboard LED switches
